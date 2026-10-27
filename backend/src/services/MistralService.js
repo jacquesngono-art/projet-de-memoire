@@ -63,7 +63,7 @@ Réponds UNIQUEMENT avec un objet JSON valide, sans texte additionnel, sans mark
 
 Format attendu :
 {
-  "intent": "search",
+  "intent": "search" | "small_talk",
   "type": "maison" | "appartement" | "studio" | "chambre" | "villa" | "terrain" | "bureau" | null,
   "city": "nom de la ville" | null,
   "district": "nom du quartier" | null,
@@ -96,6 +96,11 @@ Règles :
 - Si l'utilisateur ne précise pas un champ, mets null (ou [] pour "preferences").
 - Les nombres doivent être des entiers, pas des chaînes.
 - "explanation" doit être une phrase courte et naturelle en français.
+- Si le message n'est PAS une demande de recherche de biens (salutation "bonjour"
+  ou "comment allez-vous", remerciement, question sur l'assistant, message
+  incohérent du type "dddddd"), renvoie "intent": "small_talk" et mets TOUS les
+  autres champs à null (ou [] pour "preferences"). N'invente JAMAIS de critères
+  dans ce cas : pas de ville, pas de type, pas de prix par défaut.
 - Ne renvoie aucun texte hors du JSON.`;
 
     const payload = {
@@ -144,7 +149,57 @@ Règles :
         console.warn('[Mistral] Repli heuristique utilisé (IA indisponible).');
         return this.normalizeCriteria({ ...criteria, explanation: 'Analyse locale (IA indisponible).' });
       }
-      throw new Error('Impossible d\'analyser la demande avec l\'IA');
+      // Rien reconnu ET IA indisponible : ce n'est probablement pas une
+      // demande de recherche → réponse conversationnelle, SANS erreur.
+      return this.normalizeCriteria({
+        intent: 'small_talk',
+        explanation: 'Message hors recherche (IA indisponible).',
+      });
+    }
+  },
+
+  /**
+   * Réponse conversationnelle à un message HORS recherche (salutation,
+   * remerciement, charabia). Aucune liste de biens n'est renvoyée.
+   */
+  async buildSmallTalkResponse(userMessage) {
+    const systemPrompt = `Tu es l'assistant virtuel de NestFind, une plateforme immobilière camerounaise.
+L'utilisateur vient de t'écrire un message qui N'EST PAS une demande de recherche de biens.
+Réponds naturellement et brièvement (1 à 3 phrases maximum), en français, puis ramène
+poliment la conversation vers ton expertise : aider à trouver un logement (quartier,
+type de bien, budget, équipements de proximité). N'invente AUCUN résultat de recherche
+et ne cite AUCUN bien, prix ni quartier comme s'ils venaient d'une recherche.`;
+
+    try {
+      const res = await httpClient.post(config.mistral.apiUrl, {
+        model: config.mistral.model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userMessage },
+        ],
+        temperature: 0.6,
+        max_tokens: 150,
+      }, {
+        headers: {
+          'Authorization': `Bearer ${config.mistral.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        timeout: 15000,
+      });
+      return res.data.choices[0].message.content.trim();
+    } catch (err) {
+      console.error('[Mistral] Erreur buildSmallTalkResponse:', err.message);
+      // Repli local (IA indisponible) : réponse type déterminée par mots-clés
+      const msg = (userMessage || '').toLowerCase();
+      if (/bonjour|salut|bonsoir|hello|coucou|bjr|slt\b|cc\b/.test(msg)) {
+        return "Bonjour ! Je suis votre assistant NestFind. Comment puis-je vous aider à trouver un bien ? " +
+          "Décrivez simplement votre besoin, par exemple « studio proche du marché à Ekounou ».";
+      }
+      if (/merci/.test(msg)) {
+        return "Avec plaisir ! Si vous voulez affiner votre recherche ou comparer des biens, n'hésitez pas.";
+      }
+      return "Je suis l'assistant immobilier NestFind : je vous aide à trouver un logement en langage naturel. " +
+        "Dites-moi par exemple « une maison de 3 chambres à Ngoa-Ekellé, moins de 50 millions » et je cherche pour vous.";
     }
   },
 
@@ -153,6 +208,9 @@ Règles :
    */
   normalizeCriteria(raw = {}) {
     return {
+      // "small_talk" : message hors recherche (salutation, bavardage,
+      // charabia) — l'orchestrateur ne lancera PAS de recherche de biens.
+      intent: raw.intent === 'small_talk' ? 'small_talk' : 'search',
       type: raw.type || null,
       city: raw.city || null,
       district: raw.district || null,

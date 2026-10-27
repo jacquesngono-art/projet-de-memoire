@@ -2,7 +2,7 @@ import MistralService from './MistralService.js';
 import AdService from './AdService.js';
 import GeocodingService from './GeocodingService.js';
 import InteractionModel from '../models/InteractionModel.js';
-import { heuristicParse } from '../utils/queryHeuristics.js';
+import { heuristicParse, isSmallTalk } from '../utils/queryHeuristics.js';
 import { resolveDistrict, resolveCity } from '../utils/placeResolver.js';
 
 /**
@@ -78,6 +78,28 @@ export const AgentAIService = {
   async searchByNaturalLanguage(userMessage, userId = null) {
     // 1. Conversion du prompt en critères JSON via Mistral (mis en cache 5 min)
     const criteria = await MistralService.parseSearchQuery(userMessage);
+
+    // ── Garde-fou conversationnel ──
+    // Un message hors recherche (salutation "comment allez-vous", remerciement,
+    // charabia "ddddd") ne doit JAMAIS déclencher une recherche : avant ce fix,
+    // aucun critère n'était reconnu → le repli "Yaoundé par défaut" retournait
+    // les 124 biens de la ville à n'importe quel message.
+    // Double détection : intention de Mistral (prompt) + heuristique locale
+    // (couvre le vieux cache sans "intent" et l'IA indisponible).
+    if (criteria.intent === 'small_talk' || isSmallTalk(userMessage)) {
+      const response = await MistralService.buildSmallTalkResponse(userMessage);
+      console.log(`[Agent] Message hors recherche détecté → réponse conversationnelle.`);
+      return {
+        criteria,
+        results: [],
+        response,
+        count: 0,
+        geocoded: false,
+        geo: null,
+        relaxed: null,
+        explanation: criteria.explanation || null,
+      };
+    }
 
     // "lycée d'Ekounou" : Mistral met parfois le lieu dans `near` sans
     // remplir `district` → la recherche filtrerait toute la ville. Si `near`

@@ -206,6 +206,28 @@ export function heuristicParse(message) {
   return { criteria, confidence, signals };
 }
 
+/**
+ * Détection locale (sans IA) d'un message HORS recherche : salutations,
+ * remerciements, questions d'usage ou charabia clavier ("dddddd").
+ * Filet de sécurité de l'orchestrateur : un tel message ne doit JAMAIS
+ * déclencher une recherche de biens.
+ */
+const SEARCH_VERBS = /cherche|trouve|montre|propose|besoin|recherche|location|louer|acheter|achete|vendre|vends?|estim|prix|quartier|dispo|annonce|logement|maison|villa|studio|appartement|terrain|chambre|bureau/;
+
+export function isSmallTalk(message) {
+  const text = (message || '').trim();
+  if (!text) return true;
+  const low = normalize(text);
+  // Charabia : une même lettre répétée (ex "ddddd", "aaaaaaa")
+  const letters = low.replace(/[^a-z]/g, '');
+  if (letters.length >= 5 && /^(.)\1+$/.test(letters)) return true;
+  // Aucun critère immobilier reconnu ET aucun verbe d'intention de recherche
+  const { signals } = heuristicParse(text);
+  if (signals > 0) return false;
+  if (SEARCH_VERBS.test(low)) return false;
+  return true;
+}
+
 /** Préférences connues, exposées pour la validation côté Mistral. */
 export const KNOWN_PREFERENCE_CODES = PREFERENCE_CATALOG.map((p) => p.code);
 
