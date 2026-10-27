@@ -80,9 +80,11 @@ const PROPERTY_TYPES = [
 ]
 
 // Visuels mis en avant sur la page d'accueil : biens réels du catalogue
-// (résidence) et repère local (sculpture artistique) fournis par l'équipe.
+// (résidence) et repères locaux de Yaoundé fournis par l'équipe
+// (sculpture artistique + Monument de la Réunification au couchant).
 const HERO_IMG_RESIDENCE = "/images/accueil-residence.jpg"
 const HERO_IMG_SCULPTURE = "/images/accueil-sculpture.jpg"
+const HERO_IMG_MONUMENT = "/images/accueil-monument.jpg"
 
 /* ── Stats Counter Section ── */
 function StatsSection() {
@@ -193,7 +195,7 @@ export function MobileHomePage({ onLaunchApp }: { onLaunchApp: () => void }) {
 
         {/* Floating property cards decorative */}
         <div className="absolute right-8 top-1/2 -translate-y-1/2 hidden xl:flex flex-col gap-3 anim-slide-right" style={{ animationDelay: "400ms" }}>
-          {[HERO_IMG_RESIDENCE, HERO_IMG_SCULPTURE].map((img, i) => (
+          {[HERO_IMG_RESIDENCE, HERO_IMG_MONUMENT].map((img, i) => (
             <div key={i} className="w-52 rounded-2xl overflow-hidden border border-border shadow-xl bg-background"
               style={{ transform: i === 0 ? "rotate(2deg)" : "rotate(-1.5deg)", animationDelay: `${400 + i * 120}ms` }}>
               <div className="relative h-32 overflow-hidden">
@@ -428,7 +430,7 @@ export function MobileHomePage({ onLaunchApp }: { onLaunchApp: () => void }) {
           </div>
           <div className="relative anim-slide-right">
             <div className="grid grid-cols-2 gap-3">
-              {[HERO_IMG_RESIDENCE, HERO_IMG_SCULPTURE, HERO_IMG_RESIDENCE, HERO_IMG_SCULPTURE].map((img, i) => (
+              {[HERO_IMG_MONUMENT, HERO_IMG_SCULPTURE, HERO_IMG_RESIDENCE, HERO_IMG_MONUMENT].map((img, i) => (
                 <div key={i} className="rounded-2xl overflow-hidden border border-border"
                   style={{ height: i % 2 === 0 ? 160 : 120, marginTop: i === 1 || i === 3 ? 24 : 0 }}>
                   <div className="relative w-full h-full">
