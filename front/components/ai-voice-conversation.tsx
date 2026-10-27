@@ -2,14 +2,18 @@
 
 /**
  * Conversation vocale immersive (style ChatGPT Voice / Gemini Live) :
- * fond noir plein écran, sphère lumineuse bleue-blanche au centre,
+ * fond noir plein écran, boule AIChatOrb (celle du chat IA) au centre,
  * barre de saisie flottante en bas. L'échange est entièrement vocal :
  * SpeechRecognition (fr-FR) à l'entrée, speechSynthesis (TTS) à la sortie,
  * et ré-écoute automatique après chaque réponse — un vrai dialogue humain↔robot.
+ * Quand l'IA propose des biens, des cartes (photo, titre, prix) apparaissent
+ * à l'écran et restent cliquables pendant la conversation.
  */
 
 import { useEffect, useRef, useState } from "react"
+import { useRouter } from "next/navigation"
 import { X, Plus, Mic, ArrowUpRight } from "lucide-react"
+import { AIChatOrb } from "@/components/ai-chat-orb"
 import { agentSearch } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
@@ -25,6 +29,16 @@ function stripMarkdown(text: string): string {
     .trim()
 }
 
+// Version parlée courte : la voix ne lit que l'essentiel (l'IA répond
+// souvent en longs paragraphes, insupportables à l'audio).
+function shortSpoken(text: string, max = 280): string {
+  const clean = stripMarkdown(text).replace(/\s+/g, " ").trim()
+  if (clean.length <= max) return clean
+  const cut = clean.slice(0, max)
+  const lastStop = Math.max(cut.lastIndexOf(". "), cut.lastIndexOf("!, "), cut.lastIndexOf("? "))
+  return (lastStop > 80 ? cut.slice(0, lastStop + 1) : cut) + " …"
+}
+
 type Status = "idle" | "listening" | "thinking" | "speaking" | "error"
 
 interface AIVoiceConversationProps {
@@ -33,9 +47,11 @@ interface AIVoiceConversationProps {
 }
 
 export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps) {
+  const router = useRouter()
   const [status, setStatus] = useState<Status>("idle")
   const [heard, setHeard] = useState("")
-  const [reply, setReply] = useState<string | null>(null)
+  const [spoken, setSpoken] = useState<string | null>(null)
+  const [results, setResults] = useState<any[]>([])
   const [draft, setDraft] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [bars, setBars] = useState<number[]>(Array(14).fill(6))
@@ -130,7 +146,7 @@ export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps)
     } catch {}
     const u = new SpeechSynthesisUtterance(text)
     u.lang = "fr-FR"
-    u.rate = 1.02
+    u.rate = 1.05
     u.pitch = 1.0
     u.volume = 1.0
     try {
@@ -168,16 +184,23 @@ export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps)
       if (typeof window !== "undefined") window.speechSynthesis?.cancel()
     } catch {}
     setStat("thinking")
+    setResults([])
+    setSpoken(null)
     try {
       const json: any = await agentSearch(q)
       const payload = json?.data || json
-      const answer = payload?.response
-        ? stripMarkdown(payload.response)
-        : "Je n'ai pas trouvé de réponse. Reformulez votre demande."
-      setReply(answer)
-      // Version parlée raccourcie : la restitution vocale reste naturelle
-      const spoken = answer.length > 600 ? answer.slice(0, 600) + " …" : answer
-      speak(spoken)
+      const found = Array.isArray(payload?.results) ? payload.results : []
+      setResults(found)
+
+      // Voix courte : annonce le nombre de propositions + le cœur de la réponse
+      const intro =
+        found.length > 0
+          ? `J'ai trouvé ${found.length} proposition${found.length > 1 ? "s" : ""} pour toi. `
+          : ""
+      const body = payload?.response ? shortSpoken(payload.response) : "Regarde les propositions affichées."
+      const final = intro + body
+      setSpoken(final)
+      speak(final)
     } catch (e: any) {
       setError(e?.message || "Erreur lors de la recherche IA.")
       setStat("error")
@@ -221,7 +244,6 @@ export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps)
     }
 
     rec.onerror = () => {
-      // Silence / permission refusée : on retente doucement
       if (activeRef.current && statusRef.current === "listening") {
         setStat("idle")
       }
@@ -248,7 +270,7 @@ export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps)
     }
   }
 
-  function handleSphereTap() {
+  function handleOrbTap() {
     if (status === "speaking") {
       // Interrompre la voix → écouter la personne tout de suite
       try {
@@ -272,7 +294,8 @@ export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps)
     activeRef.current = true
     setStatus("idle")
     setError(null)
-    setReply(null)
+    setSpoken(null)
+    setResults([])
     setHeard("")
     // Le clic sur le bouton qui ouvre l'overlay donne le "geste utilisateur"
     // requis pour le micro et la synthèse vocale.
@@ -301,6 +324,8 @@ export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps)
   }, [])
 
   if (!open) return null
+
+  const orbState = status === "error" ? "idle" : status
 
   const statusLabel =
     status === "listening"
@@ -339,77 +364,48 @@ export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps)
       </div>
 
       {/* Zone centrale */}
-      <div className="absolute inset-0 flex flex-col items-center justify-center px-6 pb-40">
-        {/* Sphère lumineuse bleue-blanche */}
+      <div className="absolute inset-0 flex flex-col items-center justify-center px-6 pb-64 pt-16">
+        {/* Boule AIChatOrb — celle du chat IA */}
         <button
-          onClick={handleSphereTap}
-          className="relative outline-none group"
-          aria-label={status === "speaking" ? "Interrompre la réponse" : "Sphère de l'assistant"}
+          onClick={handleOrbTap}
+          className="relative outline-none"
+          aria-label={status === "speaking" ? "Interrompre la réponse" : "Assistant vocal"}
           title={status === "speaking" ? "Interrompre et parler" : "Assistant vocal"}
         >
-          {/* Halo diffus */}
+          {/* Halo doux derrière l'orbe pour le fond noir */}
           <div
             className={cn(
-              "absolute -inset-28 rounded-full blur-[80px] transition-opacity duration-700",
-              status === "idle" ? "opacity-40" : "opacity-90"
+              "absolute -inset-16 rounded-full blur-[70px] transition-opacity duration-700",
+              status === "idle" ? "opacity-30" : "opacity-70"
             )}
             style={{
               background:
-                "radial-gradient(circle, rgba(59,130,246,0.35) 0%, rgba(37,99,235,0.18) 40%, transparent 70%)",
+                "radial-gradient(circle, rgba(158,159,239,0.35) 0%, rgba(196,113,236,0.18) 45%, transparent 70%)",
             }}
           />
-
           {/* Ondes d'émission (l'assistant parle) */}
           {status === "speaking" && (
             <>
-              <span className="absolute -inset-10 rounded-full border border-blue-400/50 voice-ripple" />
-              <span className="absolute -inset-10 rounded-full border border-sky-300/40 voice-ripple [animation-delay:1s]" />
+              <span className="absolute -inset-6 rounded-full border border-white/25 voice-ripple" />
+              <span className="absolute -inset-6 rounded-full border border-white/15 voice-ripple [animation-delay:1s]" />
             </>
           )}
-
-          {/* Sphère */}
-          <div
-            className={cn(
-              "relative w-56 h-56 sm:w-64 sm:h-64 rounded-full overflow-hidden transition-transform duration-500",
-              status === "listening" && "voice-breathe-fast",
-              status === "thinking" && "voice-breathe-slow",
-              status === "speaking" && "voice-breathe-fast"
-            )}
-            style={{
-              background:
-                "radial-gradient(circle at 32% 28%, #dbeafe 0%, #93c5fd 22%, #3b82f6 52%, #1d4ed8 72%, #0a1638 100%)",
-              boxShadow:
-                "0 0 60px rgba(59,130,246,0.55), 0 0 120px rgba(37,99,235,0.35), inset 0 -30px 60px rgba(2,6,23,0.55)",
-            }}
-          >
-            {/* Volute lumineuse animée */}
-            <div
-              className="absolute inset-0 rounded-full blur-md voice-swirl"
-              style={{
-                background:
-                  "conic-gradient(from 0deg, rgba(255,255,255,0.35), transparent 25%, rgba(147,197,253,0.45) 50%, rgba(255,255,255,0.2) 70%, transparent 85%)",
-              }}
-            />
-            {/* Reflet */}
-            <div className="absolute top-8 left-10 w-16 h-16 rounded-full bg-white/70 blur-2xl" />
-            {/* Nuage bas (effet blanc laiteux comme sur la maquette) */}
-            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 w-32 h-12 rounded-full bg-white/50 blur-xl" />
-          </div>
+          <AIChatOrb size={220} active state={orbState as any} />
         </button>
 
         {/* Statut */}
-        <div className="mt-10 text-center max-w-xl">
+        <div className="mt-8 text-center max-w-xl">
           <p className="text-white/85 text-lg sm:text-xl font-medium">{statusLabel}</p>
 
-          {/*Ondes : réelles (micro) ou animées (voix) */}
+          {/* Ondes : réelles (micro) ou animées (voix) */}
           {(status === "listening" || status === "speaking") && (
-            <div className="mt-5 flex items-center justify-center gap-[3px] h-10">
+            <div className="mt-4 flex items-center justify-center gap-[3px] h-9">
               {bars.map((h, i) => (
                 <div
                   key={i}
                   className={cn(
                     "w-[3px] rounded-full",
-                    status === "listening" ? "bg-cyan-300/90" : "voice-wave bg-blue-400/90"
+                    status === "listening" ? "bg-cyan-300/90" : "voice-wave bg-white/70"
                   )}
                   style={
                     status === "listening"
@@ -421,27 +417,23 @@ export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps)
             </div>
           )}
 
-          {status === "listening" && heard && (
-            <p className="mt-4 text-white/70 text-sm sm:text-base leading-relaxed">{heard}</p>
-          )}
-
           {status === "thinking" && (
-            <div className="mt-5 flex items-center justify-center gap-2">
+            <div className="mt-4 flex items-center justify-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-white/50 ai-typing-dot" />
               <span className="w-1.5 h-1.5 rounded-full bg-white/50 ai-typing-dot [animation-delay:150ms]" />
               <span className="w-1.5 h-1.5 rounded-full bg-white/50 ai-typing-dot [animation-delay:300ms]" />
             </div>
           )}
 
-          {status === "idle" && !reply && (
+          {status === "idle" && !spoken && (
             <p className="mt-3 text-white/40 text-sm">
               Parlez : « Trouve-moi un appartement 2 chambres à Bastos, budget 150 000 FCFA »
             </p>
           )}
 
-          {reply && (status === "idle" || status === "error") && (
-            <p className="mt-4 text-white/60 text-xs sm:text-sm whitespace-pre-wrap leading-relaxed line-clamp-5 max-h-36 overflow-hidden">
-              {reply}
+          {spoken && (status === "idle" || status === "error") && (
+            <p className="mt-3 text-white/60 text-xs sm:text-sm leading-relaxed line-clamp-4">
+              {spoken}
             </p>
           )}
 
@@ -450,6 +442,50 @@ export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps)
           )}
         </div>
       </div>
+
+      {/* Cartes des biens proposés par l'IA (cliquables, comme dans le chat) */}
+      {results.length > 0 && (
+        <div className="absolute bottom-[86px] left-0 right-0 z-10">
+          <div className="px-4 mb-2 flex items-center justify-between">
+            <p className="text-white/50 text-xs px-1">
+              {results.length} proposition{results.length > 1 ? "s" : ""} — tape pour voir le détail
+            </p>
+          </div>
+          <div className="flex gap-3 overflow-x-auto px-4 pb-2 scrollbar-hide">
+            {results.slice(0, 8).map((ad: any, i: number) => {
+              const photos = Array.isArray(ad.photos)
+                ? ad.photos.map((p: any) => p?.url || p).filter(Boolean)
+                : []
+              const img = photos[0] || "/images/house-1.jpg"
+              const price = Number(ad.price)
+              return (
+                <div
+                  key={(ad.ad_id || ad.id || i) + ""}
+                  onClick={() => router.push(`/annonce/${ad.ad_id || ad.id}`)}
+                  className="shrink-0 w-[240px] bg-white/95 backdrop-blur rounded-2xl overflow-hidden cursor-pointer hover:bg-white transition-colors shadow-lg"
+                >
+                  <img src={img} alt={ad.title || "Bien"} className="w-full h-24 object-cover" />
+                  <div className="p-2.5">
+                    <p className="text-sm font-semibold text-stone-900 truncate">
+                      {ad.title || "Annonce"}
+                    </p>
+                    <div className="flex items-center justify-between mt-1">
+                      <p className="text-xs text-stone-500 truncate flex-1">
+                        {ad.city || ad.district || ad.address || "Cameroun"}
+                      </p>
+                      {!isNaN(price) && (
+                        <p className="text-sm font-bold text-stone-900 ml-2">
+                          {price >= 1000 ? `${(price / 1000).toFixed(0)}k` : price} FCFA
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Barre de saisie flottante en bas */}
       <div className="absolute bottom-6 left-0 right-0 px-4 z-10">
@@ -469,7 +505,6 @@ export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps)
               if (e.key === "Enter" && draft.trim() && status !== "thinking") {
                 const text = draft
                 setDraft("")
-                setReply(null)
                 processQuery(text)
               }
             }}
@@ -478,7 +513,7 @@ export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps)
             className="flex-1 bg-transparent text-white placeholder:text-white/35 text-sm sm:text-base outline-none min-w-0 disabled:opacity-50"
           />
           <button
-            onClick={handleSphereTap}
+            onClick={handleOrbTap}
             title={status === "listening" ? "Arrêter l'écoute" : "Parler"}
             className={cn(
               "w-9 h-9 flex items-center justify-center rounded-full transition-colors",
@@ -494,7 +529,6 @@ export function AIVoiceConversation({ open, onClose }: AIVoiceConversationProps)
               if (!draft.trim() || status === "thinking" || status === "speaking") return
               const text = draft
               setDraft("")
-              setReply(null)
               processQuery(text)
             }}
             disabled={!draft.trim() || status === "thinking"}
