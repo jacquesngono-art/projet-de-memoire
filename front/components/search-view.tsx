@@ -2,11 +2,12 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Search, SlidersHorizontal, MapPin, X, LayoutDashboard, Sparkles, Send, Navigation, LocateFixed, Crosshair, ChevronRight, Bed, Bath, GripHorizontal } from "lucide-react"
+import { Search, SlidersHorizontal, MapPin, X, LayoutDashboard, Sparkles, Send, Navigation, LocateFixed, Crosshair, ChevronRight, Bed, Bath, GripHorizontal, Mic, MicOff } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getAds, getAdDetail, agentSearch, listPreferences } from "@/lib/api"
 import { formatAccuracyM, getPreciseBrowserPosition, isLocationPlausible, isAccuracyTooCoarse, distanceToCatalogKm } from "@/lib/geolocation"
 import { Property2DMap } from "@/components/property-2d-map"
+import { AIMoonPanel } from "@/components/ai-moon-panel"
 
 const POPULAR_CITIES = ["Yaoundé", "Douala", "Bafoussam", "Bamenda", "Garoua", "Kribi", "Buea", "Limbe", "Bertoua", "Maroua", "Ngaoundéré", "Ebolowa"]
 const PROPERTY_TYPES = ["Tous", "maison", "appartement", "studio", "chambre", "villa", "terrain", "bureau"]
@@ -113,6 +114,11 @@ export function SearchView() {
   const searchParams = useSearchParams()
   const targetAdId = searchParams.get("ad_id")
   const [query, setQuery] = useState("")
+  const [isListening, setIsListening] = useState(false)
+  const recognitionRef = useRef<any>(null)
+  const aiModeRef = useRef(false)
+  const handleAiSearchRef = useRef<(() => void) | null>(null)
+  const handlePlaceSearchRef = useRef<((q?: string) => void) | null>(null)
   const [type, setType] = useState("Tous")
   const [priceMin, setPriceMin] = useState("")
   const [priceMax, setPriceMax] = useState("")
@@ -144,6 +150,8 @@ export function SearchView() {
   const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null)
   const hasFetchedRef = useRef(false)
   const mapActionsRef = useRef<MapActions | null>(null)
+  const [aiVoiceOpen, setAiVoiceOpen] = useState(false)
+  const [aiVoiceQuery, setAiVoiceQuery] = useState("")
 
   // Drag : démarre le suivi du pointeur (souris + tactile)
   const onCardDragStart = useCallback((e: React.PointerEvent) => {
@@ -478,6 +486,89 @@ export function SearchView() {
     [selectedProperty, results]
   )
 
+  useEffect(() => { aiModeRef.current = aiMode }, [aiMode])
+  useEffect(() => { handleAiSearchRef.current = handleAiSearch }, [handleAiSearch])
+  useEffect(() => { handlePlaceSearchRef.current = handlePlaceSearch }, [handlePlaceSearch])
+
+  // Reconnaissance vocale (Web Speech API) pour recherche classique et IA
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) return
+
+    const recognition = new SpeechRecognition()
+    recognition.lang = "fr-FR"
+    recognition.continuous = false
+    recognition.interimResults = true
+    recognition.maxAlternatives = 1
+
+    recognition.onresult = (event: any) => {
+      let interim = ""
+      let final = ""
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript
+        if (event.results[i].isFinal) {
+          final += transcript
+        } else {
+          interim += transcript
+        }
+      }
+      const text = (final || interim).trim()
+      if (!text) return
+      setQuery(text)
+      if (final) {
+        setIsListening(false)
+        try { recognition.stop() } catch {}
+        setTimeout(() => {
+          setShowSuggestions(false)
+          if (aiModeRef.current) {
+            handleAiSearchRef.current?.()
+          } else {
+            handlePlaceSearchRef.current?.(text)
+          }
+        }, 150)
+      }
+    }
+
+    recognition.onerror = () => setIsListening(false)
+    recognition.onend = () => setIsListening(false)
+
+    recognitionRef.current = recognition
+    return () => {
+      try { recognition.stop() } catch {}
+    }
+  }, [])
+
+  const toggleVoiceSearch = useCallback(() => {
+    if (aiMode) {
+      setAiVoiceQuery(query.trim())
+      setAiVoiceOpen(true)
+      return
+    }
+    const recognition = recognitionRef.current
+    if (!recognition) {
+      alert("La recherche vocale n'est pas prise en charge par ce navigateur.\nUtilisez Chrome, Edge ou Opera (avec le micro autorisé).")
+      return
+    }
+    if (isListening) {
+      try { recognition.stop() } catch {}
+      setIsListening(false)
+      return
+    }
+    try {
+      setQuery("")
+      setAiResponse(null)
+      setAiGeo(null)
+      setShowSuggestions(false)
+      recognition.start()
+      setIsListening(true)
+    } catch (err) {
+      console.error("[VoiceSearch] Erreur micro :", err)
+      setIsListening(false)
+    }
+  }, [aiMode, isListening, query])
+
   // Suggestions de lieux pendant la frappe
   const suggestions = query.trim().length > 0
     ? [...POPULAR_CITIES, ...POPULAR_DISTRICTS]
@@ -499,6 +590,7 @@ export function SearchView() {
         onMapActions={handleMapActions}
         onRouteInfo={handleRouteInfo}
       />
+      <AIMoonPanel open={aiVoiceOpen} onClose={() => setAiVoiceOpen(false)} initialQuery={aiVoiceQuery} />
 
       {/* Top bar with back button + search */}
       <div className="absolute top-0 left-0 right-0 z-20 pointer-events-none">
@@ -533,7 +625,24 @@ export function SearchView() {
                   if (e.key === "Escape") setShowSuggestions(false)
                 }}
               />
-              {query && (
+              {recognitionRef.current && (
+                <button
+                  onClick={toggleVoiceSearch}
+                  className={cn(
+                    "shrink-0 p-1.5 rounded-full transition-colors",
+                    isListening
+                      ? "bg-red-500 text-white animate-pulse"
+                      : aiMode
+                      ? "bg-amber-100 text-amber-600 hover:bg-amber-200"
+                      : "bg-stone-100 text-stone-600 hover:bg-stone-200"
+                  )}
+                  title={isListening ? "Arrêter l'écoute" : aiMode ? "Parler à l'Assistant IA" : "Recherche vocale"}
+                  aria-label={isListening ? "Arrêter l'enregistrement vocal" : "Démarrer la recherche vocale"}
+                >
+                  {isListening ? <MicOff size={14} /> : <Mic size={14} />}
+                </button>
+              )}
+              {query && !isListening && (
                 <button onClick={() => { setQuery(""); setAiResponse(null); setAiGeo(null); setShowSuggestions(false) }} className="text-stone-400 hover:text-stone-600 shrink-0">
                   <X size={14} />
                 </button>
@@ -541,7 +650,7 @@ export function SearchView() {
               {aiMode && (
                 <button
                   onClick={handleAiSearch}
-                  disabled={aiLoading || !query.trim()}
+                  disabled={aiLoading || !query.trim() || isListening}
                   className="shrink-0 p-1.5 rounded-full bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40 transition-colors"
                   title="Rechercher avec l'IA"
                 >

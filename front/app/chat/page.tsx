@@ -2,12 +2,13 @@
 
 import { useState, useRef, useEffect, useCallback } from "react"
 import { useRouter } from "next/navigation"
-import { ArrowLeft, MessageSquareDashed, LayoutDashboard } from "lucide-react"
+import { ArrowLeft, MessageSquareDashed, LayoutDashboard, Mic } from "lucide-react"
 import { AIChatOrb } from "@/components/ai-chat-orb"
 import { AIChatTypingIndicator } from "@/components/ai-chat-typing"
 import { AIChatComposer, type AIModel } from "@/components/ai-chat-composer"
 import { getUser, getProfile } from "@/lib/api"
 import { cn } from "@/lib/utils"
+import { AIVoiceConversation } from "@/components/ai-voice-conversation"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api"
 
@@ -71,6 +72,7 @@ export default function AIChatPage() {
   // messages dans le chat IA (à la place de la simple lettre initiale).
   const [userPhoto, setUserPhoto] = useState<string | null>(null)
   const [userInitial, setUserInitial] = useState("V")
+  const [aiVoiceOpen, setAiVoiceOpen] = useState(false)
 
   useEffect(() => {
     // 1. Source rapide : l'objet gardé en localStorage à la connexion.
@@ -196,13 +198,26 @@ export default function AIChatPage() {
               <p className="text-xs text-muted-foreground">Agent immobilier virtuel</p>
             </div>
           </div>
-          <button
-            onClick={clearChat}
-            className="p-2 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-600 transition-colors"
-            aria-label="Reset chat"
-          >
-            <MessageSquareDashed className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setAiVoiceOpen(true)}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-2 rounded-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors shadow-sm"
+              )}
+              aria-label="Conversation vocale"
+              title="Conversation vocale avec l'assistant"
+            >
+              <Mic className="w-4 h-4" />
+              <span className="hidden sm:inline">Vocal</span>
+            </button>
+            <button
+              onClick={clearChat}
+              className="p-2 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-600 transition-colors"
+              aria-label="Reset chat"
+            >
+              <MessageSquareDashed className="w-5 h-5" />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -308,6 +323,7 @@ export default function AIChatPage() {
         selectedModel={selectedModel}
         onModelChange={setSelectedModel}
       />
+      <AIVoiceConversation open={aiVoiceOpen} onClose={() => setAiVoiceOpen(false)} />
     </div>
   )
 }

@@ -4,7 +4,9 @@ export function AIChatOrb({
   className,
   size = 56,
   variant = "default",
-}: { className?: string; size?: number; variant?: "default" | "red" }) {
+  active = false,
+  state = "idle",
+}: { className?: string; size?: number; variant?: "default" | "red"; active?: boolean; state?: "idle" | "listening" | "thinking" | "speaking" }) {
   const colors =
     variant === "red"
       ? {
@@ -27,15 +29,26 @@ export function AIChatOrb({
   const blurAmount = Math.max(6, size * 0.15)
   const sizes = [size * 0.45, size * 0.35, size * 0.5, size * 0.25, size * 0.3]
 
+  const pulseDuration =
+    state === "speaking" ? "1.6s" : state === "listening" ? "1.1s" : state === "thinking" ? "2.2s" : "8s"
+  const scale = state === "speaking" ? 1.08 : state === "listening" ? 1.1 : state === "thinking" ? 1.04 : 1
+
   return (
     <div
-      className={`relative rounded-full overflow-hidden ${className}`}
+      className={`relative rounded-full overflow-hidden ${className} ${active ? "ai-orb-active" : ""}`}
       style={{
         width: size,
         height: size,
         backgroundColor: colors.bg,
-        animation: "orb-hue-rotate 8s linear infinite",
-        boxShadow: "rgba(17, 12, 46, 0.15) 0px 48px 100px 0px",
+        animation: `orb-hue-rotate ${pulseDuration} linear infinite`,
+        transform: `scale(${scale})`,
+        transition: "transform 0.35s ease, box-shadow 0.35s ease",
+        boxShadow:
+          state === "speaking"
+            ? "0 0 0 0 rgba(196, 113, 236, 0.5), 0 14px 44px rgba(158, 159, 239, 0.65), inset 0 2px 4px rgba(255, 255, 255, 0.35)"
+            : state === "listening"
+              ? "0 0 0 0 rgba(244, 114, 182, 0.45), 0 12px 38px rgba(158, 159, 239, 0.6), inset 0 2px 4px rgba(255, 255, 255, 0.32)"
+              : "rgba(17, 12, 46, 0.15) 0px 48px 100px 0px",
       }}
       aria-hidden="true"
     >

@@ -342,9 +342,9 @@ export function Property2DMap({ properties, onMarkerClick, destination, onCloseR
     const applyPosition = (pos: BrowserGeoPosition) => {
       // Garde-fou de vraisemblance : le navigateur (PC sans GPS) estime la
       // position par Wi-Fi/fausse triangulation et peut se tromper de 200 km
-      // (ex : Yaoundé → Douala). Une position trop loin du catalogue ne doit
-      // NI déplacer la caméra NI afficher un faux point bleu. Si une position
-      // précise arrive ensuite (watchPosition continue), elle sera acceptée.
+      // (ex : Yaoundé → Douala). On AFFICHERA quand même le point bleu pour
+      // montrer à l'utilisateur où le navigateur le situe, mais on avertit et
+      // on propose de se recentrer sur Yaoundé.
       if (
         !isLocationPlausible(pos.lat, pos.lon) ||
         isAccuracyTooCoarse(pos.accuracy)
@@ -352,8 +352,12 @@ export function Property2DMap({ properties, onMarkerClick, destination, onCloseR
         const farKm = Math.round(distanceToCatalogKm(pos.lat, pos.lon))
         setGeoUnreliable({ km: farKm })
         setGeoError(
-          `Votre navigateur vous situe à ${farKm} km de Yaoundé : position GPS non fiable.`
+          `Votre navigateur vous situe à ~${farKm} km de Yaoundé : position GPS non fiable.`
         )
+        userPosRef.current = [pos.lon, pos.lat]
+        userAccuracyRef.current = pos.accuracy
+        showUserMarker([pos.lon, pos.lat], pos.accuracy)
+        setGeoLocating(false)
         return
       }
       setGeoUnreliable(null)
@@ -624,76 +628,45 @@ export function Property2DMap({ properties, onMarkerClick, destination, onCloseR
 
     if (validProps.length === 0) return
 
-    // Couleur de toiture par type de bien : chaque type de logement est
-    // identifiable d'un coup d'œil sur la carte.
-    const ROOF_COLORS: Record<string, string> = {
-      maison: "#dc2626",
-      villa: "#9333ea",
-      appartement: "#2563eb",
-      studio: "#d97706",
-      chambre: "#0d9488",
-      terrain: "#16a34a",
-      bureau: "#64748b",
-    }
-    const roofColor = (t?: string | null) =>
-      ROOF_COLORS[(t || "").toLowerCase()] || "#ea580c"
-
-    // Classes CSS des marqueurs maison (injectées une seule fois)
-    if (!document.getElementById("nestfind-pin-styles")) {
-      const style = document.createElement("style")
-      style.id = "nestfind-pin-styles"
-      style.textContent = `
-        .nestfind-pin-inner { position: relative; transition: transform 0.15s ease; transform-origin: 50% 100%; }
-        .nestfind-pin-inner:hover { transform: scale(1.18); }
-        .nestfind-pin-inner .np-price {
-          position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
-          background: rgba(26,26,26,0.95); color: #fff; padding: 4px 10px; border-radius: 16px;
-          font-size: 11px; font-weight: 700; white-space: nowrap; border: 2px solid #fff;
-          box-shadow: 0 3px 8px rgba(0,0,0,0.35); opacity: 0; pointer-events: none;
-          transition: opacity 0.15s ease;
-        }
-        .nestfind-pin-inner:hover .np-price { opacity: 1; }
-      `
-      document.head.appendChild(style)
-    }
-
     validProps.forEach((prop) => {
-      // Marqueur « maison » dessiné en SVG (dessin de maison avec toit coloré
-      // selon le type de bien) relié au point GPS par une pointe.
-      // IMPORTANT : maplibre applique `transform: translate(...)` sur l'élément
-      // racine du marker pour le positionner (anchor "bottom" = la pointe).
-      // On n'anime jamais transform sur le wrapper — le zoom au survol se fait
-      // sur le conteneur interne (.nestfind-pin-inner), sinon le pin "fuit".
-      const color = roofColor(prop.property_type)
-      const priceLabel = prop.price
-        ? `${(prop.price / 1000).toFixed(0)}k FCFA`
-        : "Voir"
-
+      // Marqueur en forme de pilule avec le prix (style d'origine)
       const wrapper = document.createElement("div")
-      // will-change:transform indique au navigateur que maplibre repositionne
-      // cet élément à chaque frame => pin promu sur son propre layer GPU.
       wrapper.style.cssText = "pointer-events: auto; cursor: pointer; will-change: transform;"
-      wrapper.title = `${prop.title || "Bien"} — ${priceLabel}`
 
-      const inner = document.createElement("div")
-      inner.className = "nestfind-pin-inner"
-      inner.innerHTML = `
-        <svg width="30" height="40" viewBox="0 0 30 40" aria-hidden="true">
-          <ellipse cx="15" cy="38.4" rx="5" ry="1.6" fill="rgba(0,0,0,0.25)"/>
-          <polygon points="10,29 20,29 15,37.5" fill="#1f2937"/>
-          <polygon points="15,1 29,13 1,13" fill="${color}" stroke="#1f2937" stroke-width="1.6" stroke-linejoin="round"/>
-          <rect x="4" y="13" width="22" height="15.5" rx="1.4" fill="#ffffff" stroke="#1f2937" stroke-width="1.6"/>
-          <rect x="12" y="20.5" width="6" height="8" rx="0.8" fill="${color}"/>
-          <rect x="6.5" y="15.5" width="4.5" height="4" rx="0.5" fill="${color}" opacity="0.85"/>
-        </svg>
-        <div class="np-price">${priceLabel}</div>
+      const badge = document.createElement("div")
+      badge.style.cssText = `
+        background: rgba(26, 26, 26, 0.95);
+        color: white;
+        padding: 4px 10px;
+        border-radius: 16px;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+        box-shadow: 0 3px 8px rgba(0,0,0,0.35);
+        border: 2px solid white;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+        max-width: 90px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        transform-origin: center bottom;
       `
+      badge.textContent = prop.price ? `${(prop.price / 1000).toFixed(0)}k FCFA` : "Voir"
+      badge.title = prop.title || ""
 
-      const clickHandler = (ev: Event) => {
+      badge.addEventListener("mouseenter", () => {
+        badge.style.transform = "scale(1.12)"
+        badge.style.boxShadow = "0 6px 16px rgba(0,0,0,0.45)"
+        wrapper.style.zIndex = "1000"
+      })
+      badge.addEventListener("mouseleave", () => {
+        badge.style.transform = "scale(1)"
+        badge.style.boxShadow = "0 3px 8px rgba(0,0,0,0.35)"
+        wrapper.style.zIndex = ""
+      })
+      badge.addEventListener("click", (ev) => {
         ev.stopPropagation()
         const id = prop.ad_id || prop.id || ""
         if (id && onMarkerClick) onMarkerClick(id)
-        // Zoom vers le bien cliqué (la caméra suit le marqueur)
         const map = mapRef.current
         if (map && prop.latitude != null && prop.longitude != null) {
           map.flyTo({
@@ -703,20 +676,11 @@ export function Property2DMap({ properties, onMarkerClick, destination, onCloseR
             essential: true,
           })
         }
-      }
-      inner.addEventListener("click", clickHandler)
-      // Stacking context : au survol, le pin dépasse les pins voisins
-      inner.addEventListener("mouseenter", () => { wrapper.style.zIndex = "1000" })
-      inner.addEventListener("mouseleave", () => { wrapper.style.zIndex = "" })
-
-      wrapper.appendChild(inner)
+      })
+      wrapper.appendChild(badge)
       const el = wrapper
 
-      // NB : on ne crée PAS de maplibregl.Popup par marqueur — le clic est
-      // intercepté (stopPropagation) et le détail s'affiche dans la card
-      // overlay du parent. Créer ~120 popups jamais ouverts coûtait cher.
-
-      const marker = new maplibregl.Marker({ element: el, anchor: "bottom" })
+      const marker = new maplibregl.Marker({ element: el })
         .setLngLat([prop.longitude!, prop.latitude!])
         .addTo(mapRef.current!)
 
