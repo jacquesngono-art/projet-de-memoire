@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { Search, SlidersHorizontal, MapPin, X, LayoutDashboard, Sparkles, Send, Navigation, LocateFixed, Crosshair, ChevronRight, Bed, Bath, GripHorizontal } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getAds, getAdDetail, agentSearch, listPreferences } from "@/lib/api"
-import { formatAccuracyM, getPreciseBrowserPosition } from "@/lib/geolocation"
+import { formatAccuracyM, getPreciseBrowserPosition, isLocationPlausible, distanceToCatalogKm } from "@/lib/geolocation"
 import { Property2DMap } from "@/components/property-2d-map"
 
 const POPULAR_CITIES = ["Yaoundé", "Douala", "Bafoussam", "Bamenda", "Garoua", "Kribi", "Buea", "Limbe", "Bertoua", "Maroua", "Ngaoundéré", "Ebolowa"]
@@ -209,6 +209,18 @@ export function SearchView() {
     setRouteTarget(null)
     try {
       const pos = await getPreciseBrowserPosition({ timeoutMs: 15000, desiredAccuracyM: 80 })
+      // Garde-fou de vraisemblance : sans GPS réel, le navigateur approxime
+      // par Wi-Fi/FAI et peut se tromper de 200 km (ex : Yaoundé → Douala).
+      // Une position trop loin du catalogue (Yaoundé+Mfou) ne déclenche pas
+      // une recherche — on explique le problème à l'utilisateur.
+      if (!isLocationPlausible(pos.lat, pos.lon)) {
+        const farKm = Math.round(distanceToCatalogKm(pos.lat, pos.lon))
+        setZoneInfo(
+          `Position détectée peu fiable (${farKm} km de la zone du catalogue : Yaoundé). ` +
+          "Activez le positionnement précis (GPS) et réessayez, ou cherchez par lieu/quartier."
+        )
+        return
+      }
       const lon = pos.lon
       const lat = pos.lat
       const accuracyLabel = formatAccuracyM(pos.accuracy)
