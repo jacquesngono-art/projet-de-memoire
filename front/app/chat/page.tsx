@@ -6,6 +6,7 @@ import { ArrowLeft, MessageSquareDashed, LayoutDashboard } from "lucide-react"
 import { AIChatOrb } from "@/components/ai-chat-orb"
 import { AIChatTypingIndicator } from "@/components/ai-chat-typing"
 import { AIChatComposer, type AIModel } from "@/components/ai-chat-composer"
+import { getUser } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api"
@@ -65,6 +66,19 @@ export default function AIChatPage() {
   const [loading, setLoading] = useState(false)
   const [selectedModel, setSelectedModel] = useState<AIModel>("mistral/codestral-latest")
   const abortRef = useRef<AbortController | null>(null)
+
+  // Photo de profil de l'utilisateur connecté : réutilisée comme avatar de ses
+  // messages dans le chat IA (à la place de la simple lettre initiale).
+  const [userPhoto, setUserPhoto] = useState<string | null>(null)
+  const [userInitial, setUserInitial] = useState("V")
+
+  useEffect(() => {
+    const u = getUser()
+    if (u?.profile_photo_url) setUserPhoto(u.profile_photo_url)
+    const name = [u?.first_name, u?.last_name].find(Boolean)
+    const initial = (name || "").trim().charAt(0).toUpperCase()
+    if (initial) setUserInitial(initial)
+  }, [])
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" })
@@ -202,9 +216,15 @@ export default function AIChatPage() {
             >
               {msg.role === "assistant" ? (
                 <AIChatOrb size={36} />
+              ) : userPhoto ? (
+                <img
+                  src={userPhoto}
+                  alt="Votre photo de profil"
+                  className="w-9 h-9 rounded-full object-cover border border-stone-200 shadow-sm shrink-0"
+                />
               ) : (
                 <div className="w-9 h-9 rounded-full bg-foreground flex items-center justify-center text-background text-sm font-bold shrink-0">
-                  V
+                  {userInitial}
                 </div>
               )}
               <div
