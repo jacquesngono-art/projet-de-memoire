@@ -6,7 +6,7 @@ import { ArrowLeft, MessageSquareDashed, LayoutDashboard } from "lucide-react"
 import { AIChatOrb } from "@/components/ai-chat-orb"
 import { AIChatTypingIndicator } from "@/components/ai-chat-typing"
 import { AIChatComposer, type AIModel } from "@/components/ai-chat-composer"
-import { getUser } from "@/lib/api"
+import { getUser, getProfile } from "@/lib/api"
 import { cn } from "@/lib/utils"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001/api"
@@ -73,11 +73,27 @@ export default function AIChatPage() {
   const [userInitial, setUserInitial] = useState("V")
 
   useEffect(() => {
+    // 1. Source rapide : l'objet gardé en localStorage à la connexion.
     const u = getUser()
+    let initial = ""
     if (u?.profile_photo_url) setUserPhoto(u.profile_photo_url)
     const name = [u?.first_name, u?.last_name].find(Boolean)
-    const initial = (name || "").trim().charAt(0).toUpperCase()
+    initial = (name || "").trim().charAt(0).toUpperCase()
     if (initial) setUserInitial(initial)
+
+    // 2. Source fiable : recharger le profil depuis l'API. L'objet en
+    //    localStorage peut être périmé (photo ajoutée/changée après la
+    //    dernière connexion) — c'est ce qui faisait retomber l'avatar sur
+    //    l'initiale dans le chat IA.
+    getProfile()
+      .then((json: any) => {
+        const data = json?.data || json
+        if (data?.profile_photo_url) setUserPhoto(data.profile_photo_url)
+        const pName = [data?.first_name, data?.last_name].find(Boolean)
+        const pInitial = (pName || "").trim().charAt(0).toUpperCase()
+        if (pInitial) setUserInitial(pInitial)
+      })
+      .catch(() => {}) // non connecté ou API indisponible : on garde getUser()
   }, [])
 
   useEffect(() => {
