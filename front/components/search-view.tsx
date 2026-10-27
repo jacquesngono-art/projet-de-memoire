@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { Search, SlidersHorizontal, MapPin, X, LayoutDashboard, Sparkles, Send, Navigation, LocateFixed, Crosshair, ChevronRight, Bed, Bath, GripHorizontal } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getAds, getAdDetail, agentSearch, listPreferences } from "@/lib/api"
-import { formatAccuracyM, getPreciseBrowserPosition, isLocationPlausible, distanceToCatalogKm } from "@/lib/geolocation"
+import { formatAccuracyM, getPreciseBrowserPosition, isLocationPlausible, isAccuracyTooCoarse, distanceToCatalogKm } from "@/lib/geolocation"
 import { Property2DMap } from "@/components/property-2d-map"
 
 const POPULAR_CITIES = ["Yaoundé", "Douala", "Bafoussam", "Bamenda", "Garoua", "Kribi", "Buea", "Limbe", "Bertoua", "Maroua", "Ngaoundéré", "Ebolowa"]
@@ -213,7 +213,7 @@ export function SearchView() {
       // par Wi-Fi/FAI et peut se tromper de 200 km (ex : Yaoundé → Douala).
       // Une position trop loin du catalogue (Yaoundé+Mfou) ne déclenche pas
       // une recherche — on explique le problème à l'utilisateur.
-      if (!isLocationPlausible(pos.lat, pos.lon)) {
+      if (!isLocationPlausible(pos.lat, pos.lon) || isAccuracyTooCoarse(pos.accuracy)) {
         const farKm = Math.round(distanceToCatalogKm(pos.lat, pos.lon))
         setZoneInfo(
           `Position détectée peu fiable (${farKm} km de la zone du catalogue : Yaoundé). ` +

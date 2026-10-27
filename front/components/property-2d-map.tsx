@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback, useState } from "react"
 import * as maplibregl from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
 import { LocateFixed } from "lucide-react"
-import { formatAccuracyM, getPreciseBrowserPosition, isLocationPlausible, distanceToCatalogKm, type BrowserGeoPosition } from "@/lib/geolocation"
+import { formatAccuracyM, getPreciseBrowserPosition, isLocationPlausible, isAccuracyTooCoarse, distanceToCatalogKm, YAOUNDE_CENTER, type BrowserGeoPosition } from "@/lib/geolocation"
 
 // Contournement d'un bug de Turbopack (bundler de Next.js) qui empêche le
 // Web Worker de maplibre-gl de se charger correctement (imports internes
@@ -78,6 +78,10 @@ export function Property2DMap({ properties, onMarkerClick, destination, onCloseR
   const [routeInfo, setRouteInfo] = useState<{ km: number; min: number } | null>(null)
   const [routeLoading, setRouteLoading] = useState(false)
   const [geoLocating, setGeoLocating] = useState(false)
+  // Position GPS jugée non fiable (ex : point bleu à Douala alors que
+  // l'utilisateur est à Yaoundé) : on propose une correction manuelle
+  // au lieu d'afficher un point bleu trompeur.
+  const [geoUnreliable, setGeoUnreliable] = useState<{ km: number } | null>(null)
   const [geoError, setGeoError] = useState<string | null>(null)
   const geoStartedRef = useRef(false)
   const autoCenteredOnUserRef = useRef(false)
@@ -341,14 +345,18 @@ export function Property2DMap({ properties, onMarkerClick, destination, onCloseR
       // (ex : Yaoundé → Douala). Une position trop loin du catalogue ne doit
       // NI déplacer la caméra NI afficher un faux point bleu. Si une position
       // précise arrive ensuite (watchPosition continue), elle sera acceptée.
-      if (!isLocationPlausible(pos.lat, pos.lon)) {
+      if (
+        !isLocationPlausible(pos.lat, pos.lon) ||
+        isAccuracyTooCoarse(pos.accuracy)
+      ) {
         const farKm = Math.round(distanceToCatalogKm(pos.lat, pos.lon))
+        setGeoUnreliable({ km: farKm })
         setGeoError(
-          `Position détectée peu fiable (${farKm} km de la zone de recherche : Yaoundé). ` +
-          "Votre navigateur n'a pas de GPS précis. Activez le positionnement exact ou utilisez la recherche par quartier."
+          `Votre navigateur vous situe à ${farKm} km de Yaoundé : position GPS non fiable.`
         )
         return
       }
+      setGeoUnreliable(null)
       setGeoError(null)
       userPosRef.current = [pos.lon, pos.lat]
       userAccuracyRef.current = pos.accuracy
@@ -378,13 +386,29 @@ export function Property2DMap({ properties, onMarkerClick, destination, onCloseR
     }
 
     return getPreciseBrowserPosition({
-      timeoutMs: 15000,
-      desiredAccuracyM: 80,
+      timeoutMs: 20000,
+      desiredAccuracyM: 50,
       onUpdate: applyPosition,
     })
       .then(applyPosition)
-      .catch(() => setGeoError("Position indisponible — autorisez la localisation"))
+      .catch(() => setGeoError("Position indisponible - autorisez la localisation"))
       .finally(() => setGeoLocating(false))
+  }, [showUserMarker])
+
+  // Repli explicite : le GPS du navigateur est faux (ex : Douala) → on place
+  // le point bleu au centre de Yaoundé, choisie par l'utilisateur.
+  const useApproxYaounde = useCallback(() => {
+    setGeoUnreliable(null)
+    setGeoError(null)
+    const { lat, lon } = YAOUNDE_CENTER
+    userPosRef.current = [lon, lat]
+    // 5 km : précision honnête d'une position "centre-ville", pas d'un GPS.
+    userAccuracyRef.current = 5000
+    showUserMarker([lon, lat], 5000)
+    const map = mapRef.current
+    if (map) {
+      map.flyTo({ center: [lon, lat], zoom: 13.5, duration: 900, essential: true })
+    }
   }, [showUserMarker])
 
   // Expose flyTo + autoFit control to parent via onMapActions callback
@@ -759,7 +783,30 @@ export function Property2DMap({ properties, onMarkerClick, destination, onCloseR
         {geoLocating ? "Localisation..." : "Ma position"}
       </button>
 
-      {geoError && (
+      {geoUnreliable ? (
+        <div className="absolute bottom-5 left-4 z-20 w-[min(92vw,360px)] rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-medium text-amber-900 shadow-lg">
+          <p className="leading-relaxed">
+            <span className="font-bold">Position GPS peu fiable.</span>{" "}
+            Votre navigateur vous situe à ~{geoUnreliable.km} km (hors Yaoundé).
+          </p>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              onClick={useApproxYaounde}
+              className="rounded-full bg-amber-900 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-amber-800"
+            >
+              Utiliser Yaoundé (centre)
+            </button>
+            <button
+              type="button"
+              onClick={() => void locateUser(true)}
+              className="rounded-full border border-amber-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+            >
+              Réessayer
+            </button>
+          </div>
+        </div>
+      ) : geoError && (
         <div className="absolute bottom-5 left-4 z-20 rounded-full bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 shadow-lg border border-amber-200">
           {geoError}
         </div>

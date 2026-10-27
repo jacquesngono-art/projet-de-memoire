@@ -123,6 +123,10 @@ const CATALOG_ANCHORS: Array<[number, number]> = [
   [3.7611, 11.8264], // Mfou (limite est du catalogue)
 ]
 
+/** Centre de Yaoundé : position approximative de repli quand le GPS du
+ *  navigateur est manifestement faux (aucun GPS matériel sur PC). */
+export const YAOUNDE_CENTER = { lat: 3.8667, lon: 11.5167 }
+
 function toRad(d: number) {
   return (d * Math.PI) / 180
 }
@@ -151,4 +155,13 @@ export function distanceToCatalogKm(lat: number, lon: number) {
  */
 export function isLocationPlausible(lat: number, lon: number, maxKm = 90) {
   return distanceToCatalogKm(lat, lon) <= maxKm
+}
+
+/**
+ * Précision annoncée par le navigateur trop grossière (= position IP/Wi-Fi,
+ * pas de GPS matériel). Au-delà de 50 km, même une position "plausible"
+ * n'a aucune valeur pour une recherche immobilière.
+ */
+export function isAccuracyTooCoarse(accuracy: number | null | undefined, maxM = 50000) {
+  return accuracy != null && Number.isFinite(accuracy) && accuracy > maxM
 }
