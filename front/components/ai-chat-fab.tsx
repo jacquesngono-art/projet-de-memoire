@@ -1,14 +1,33 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { AIChatOrb } from "@/components/ai-chat-orb"
+import { getToken, AUTH_EVENT } from "@/lib/api"
 
 export function AIChatFab() {
   const router = useRouter()
   const pathname = usePathname()
+  // L'assistant n'apparaît que pour un utilisateur CONNECTÉ (jamais en
+  // overlay sur la landing publique). Authentifié = token JWT présent.
+  const [authenticated, setAuthenticated] = useState(false)
 
-  // Hide on chat pages
+  useEffect(() => {
+    const sync = () => setAuthenticated(Boolean(getToken()))
+    sync()
+    // Synchronisation immédiate via l'événement émis par saveToken/clearAuth,
+    // et via l'événement "storage" pour les autres onglets/fenêtres.
+    window.addEventListener(AUTH_EVENT, sync)
+    window.addEventListener("storage", sync)
+    return () => {
+      window.removeEventListener(AUTH_EVENT, sync)
+      window.removeEventListener("storage", sync)
+    }
+  }, [])
+
+  // Hide on chat pages et pour les visiteurs non connectés
   if (pathname === "/chat" || pathname === "/messages") return null
+  if (!authenticated) return null
 
   return (
     <button

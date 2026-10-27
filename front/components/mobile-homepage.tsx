@@ -79,6 +79,11 @@ const PROPERTY_TYPES = [
   { label: "Terrain", img: "/images/house-4.jpg", count: "340 annonces" },
 ]
 
+// Visuels mis en avant sur la page d'accueil : biens réels du catalogue
+// (résidence) et repère local (sculpture artistique) fournis par l'équipe.
+const HERO_IMG_RESIDENCE = "/images/accueil-residence.jpg"
+const HERO_IMG_SCULPTURE = "/images/accueil-sculpture.jpg"
+
 /* ── Stats Counter Section ── */
 function StatsSection() {
   const { ref, visible } = useInView()
@@ -188,7 +193,7 @@ export function MobileHomePage({ onLaunchApp }: { onLaunchApp: () => void }) {
 
         {/* Floating property cards decorative */}
         <div className="absolute right-8 top-1/2 -translate-y-1/2 hidden xl:flex flex-col gap-3 anim-slide-right" style={{ animationDelay: "400ms" }}>
-          {["/images/house-2.jpg", "/images/house-4.jpg"].map((img, i) => (
+          {[HERO_IMG_RESIDENCE, HERO_IMG_SCULPTURE].map((img, i) => (
             <div key={i} className="w-52 rounded-2xl overflow-hidden border border-border shadow-xl bg-background"
               style={{ transform: i === 0 ? "rotate(2deg)" : "rotate(-1.5deg)", animationDelay: `${400 + i * 120}ms` }}>
               <div className="relative h-32 overflow-hidden">
@@ -203,7 +208,7 @@ export function MobileHomePage({ onLaunchApp }: { onLaunchApp: () => void }) {
         </div>
 
         <div className="absolute left-8 top-1/2 -translate-y-1/2 hidden xl:flex flex-col gap-3 anim-slide-left" style={{ animationDelay: "350ms" }}>
-          {["/images/house-5.jpg", "/images/house-1.jpg"].map((img, i) => (
+          {[HERO_IMG_SCULPTURE, HERO_IMG_RESIDENCE].map((img, i) => (
             <div key={i} className="w-44 rounded-2xl overflow-hidden border border-border shadow-xl bg-background"
               style={{ transform: i === 0 ? "rotate(-2deg)" : "rotate(1.5deg)", animationDelay: `${350 + i * 120}ms` }}>
               <div className="relative h-28 overflow-hidden">
@@ -423,7 +428,7 @@ export function MobileHomePage({ onLaunchApp }: { onLaunchApp: () => void }) {
           </div>
           <div className="relative anim-slide-right">
             <div className="grid grid-cols-2 gap-3">
-              {["/images/house-3.jpg", "/images/house-6.jpg", "/images/house-5.jpg", "/images/house-1.jpg"].map((img, i) => (
+              {[HERO_IMG_RESIDENCE, HERO_IMG_SCULPTURE, HERO_IMG_RESIDENCE, HERO_IMG_SCULPTURE].map((img, i) => (
                 <div key={i} className="rounded-2xl overflow-hidden border border-border"
                   style={{ height: i % 2 === 0 ? 160 : 120, marginTop: i === 1 || i === 3 ? 24 : 0 }}>
                   <div className="relative w-full h-full">

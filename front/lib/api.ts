@@ -16,14 +16,21 @@ export function getToken(): string | null {
   return localStorage.getItem("immo_token")
 }
 
+// Événement global de changement d'état d'authentification : permet aux
+// composants montés (ex : FAB assistant IA) de se synchroniser immédiatement
+// après login/logout sans recharger la page.
+export const AUTH_EVENT = "immo_auth_changed"
+
 export function saveToken(token: string) {
   if (typeof window === "undefined") return
   localStorage.setItem("immo_token", token)
+  window.dispatchEvent(new Event(AUTH_EVENT))
 }
 
 export function removeToken() {
   if (typeof window === "undefined") return
   localStorage.removeItem("immo_token")
+  window.dispatchEvent(new Event(AUTH_EVENT))
 }
 
 export function getUser(): any | null {
