@@ -24,6 +24,19 @@ const parseCache = createTtlCache({ ttlMs: 5 * 60 * 1000, maxSize: 500 });
 
 const PREFERENCE_LABELS = PREFERENCE_CATALOG.map((p) => `- "${p.code}" : ${p.label}`).join('\n');
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Modèles de repli, utilisés UNIQUEMENT si le modèle principal est saturé
+ * (429, ex: code 3505 "backend_out_of_capacity") ou retiré du catalogue (404).
+ * La clé API reste TOUJOURS la clé principale — aucune rotation de clé.
+ * Surchargables via .env : MISTRAL_MODEL_FALLBACKS / MISTRAL_VISION_FALLBACKS.
+ */
+const TEXT_MODEL_FALLBACKS = (process.env.MISTRAL_MODEL_FALLBACKS || 'mistral-small-latest,ministral-8b-latest')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+const VISION_MODEL_FALLBACKS = (process.env.MISTRAL_VISION_FALLBACKS || 'mistral-medium-latest,magistral-small-latest')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+
 /**
  * Service Mistral AI — Agent virtuel immobilier.
  *
@@ -116,11 +129,9 @@ Règles :
     };
 
     try {
-      const res = await httpClient.post(config.mistral.apiUrl, payload, {
-        headers: {
-          'Authorization': `Bearer ${config.mistral.apiKey}`,
-          'Content-Type': 'application/json',
-        },
+      const res = await this._callMistralResilient(payload, {
+        timeout: 15000,
+        fallbackModels: [TEXT_MODEL_FALLBACKS[0]], // repli conservateur : le mode JSON exige un modèle compatible
       });
 
       const raw = res.data.choices[0].message.content.trim();
@@ -171,7 +182,7 @@ type de bien, budget, équipements de proximité). N'invente AUCUN résultat de 
 et ne cite AUCUN bien, prix ni quartier comme s'ils venaient d'une recherche.`;
 
     try {
-      const res = await httpClient.post(config.mistral.apiUrl, {
+      const res = await this._callMistralResilient({
         model: config.mistral.model,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -179,13 +190,7 @@ et ne cite AUCUN bien, prix ni quartier comme s'ils venaient d'une recherche.`;
         ],
         temperature: 0.6,
         max_tokens: 150,
-      }, {
-        headers: {
-          'Authorization': `Bearer ${config.mistral.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      });
+      }, { timeout: 15000, fallbackModels: TEXT_MODEL_FALLBACKS });
       return res.data.choices[0].message.content.trim();
     } catch (err) {
       console.error('[Mistral] Erreur buildSmallTalkResponse:', err.message);
@@ -239,6 +244,59 @@ et ne cite AUCUN bien, prix ni quartier comme s'ils venaient d'une recherche.`;
   },
 
   /**
+   * Appel Mistral résilient (anti-429).
+   *
+   * Le modèle principal (config.mistral.model / visionModel) est toujours
+   * essayé EN PREMIER, avec la clé API principale. En cas de saturation
+   * (429 — ex: code 3505 backend_out_of_capacity), on attend puis on
+   * réessaie le MÊME modèle ; si la saturation persiste, on bascule sur
+   * les modèles de repli déclarés. Une erreur 401/403 (clé invalide)
+   * remonte immédiatement — on ne change jamais de clé.
+   *
+   * @param {Object} payload - Corps de la requête (model, messages, ...).
+   * @param {Object} opts - { timeout, fallbackModels }.
+   */
+  async _callMistralResilient(payload, { timeout = 15000, fallbackModels = [] } = {}) {
+    const models = [payload.model, ...fallbackModels];
+    const retryDelays = [1500, 3000]; // anti-429 : 2 réessais sur le modèle principal
+    let lastErr = null;
+
+    for (let m = 0; m < models.length; m++) {
+      const model = models[m];
+      // Modèle principal : 1 essai + 2 réessais. Modèles de repli : 1 essai chacun.
+      const attempts = m === 0 ? 1 + retryDelays.length : 1;
+      for (let a = 0; a < attempts; a++) {
+        if (a > 0) {
+          console.warn(`[Mistral] 429 -> réessai ${a}/${retryDelays.length} sur ${model} dans ${retryDelays[a - 1]} ms`);
+          await sleep(retryDelays[a - 1]);
+        }
+        try {
+          const res = await httpClient.post(config.mistral.apiUrl, { ...payload, model }, {
+            headers: {
+              'Authorization': `Bearer ${config.mistral.apiKey}`,
+              'Content-Type': 'application/json',
+            },
+            timeout,
+          });
+          if (m > 0) {
+            console.warn(`[Mistral] Bascule modèle réussie : ${models[0]} -> ${model}`);
+          }
+          return res;
+        } catch (err) {
+          lastErr = err;
+          const status = err.response && err.response.status;
+          if (status === 401 || status === 403) throw err;  // clé invalide : inutile d'insister
+          if (status === 429) continue;                     // saturé : réessayer, puis modèle suivant
+          if (status === 404 || status === 400) break;      // modèle retiré/incompatible : modèle suivant
+          if (status >= 500 || err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT') continue;
+          throw err;                                        // autre erreur (4xx logique) : remonter
+        }
+      }
+    }
+    throw lastErr;
+  },
+
+  /**
    * Génère une description d'annonce à partir des caractéristiques.
    */
   async generateAdDescription({ type, area, bedrooms, bathrooms, city, district, price }) {
@@ -250,7 +308,7 @@ Ne mentionne pas le prix dans la description. Réponds uniquement avec le texte 
 Ville: ${city}, Quartier: ${district}, Prix: ${price} FCFA`;
 
     try {
-      const res = await httpClient.post(config.mistral.apiUrl, {
+      const res = await this._callMistralResilient({
         model: config.mistral.model,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -258,13 +316,7 @@ Ville: ${city}, Quartier: ${district}, Prix: ${price} FCFA`;
         ],
         temperature: 0.7,
         max_tokens: 400,
-      }, {
-        headers: {
-          'Authorization': `Bearer ${config.mistral.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      });
+      }, { timeout: 15000, fallbackModels: TEXT_MODEL_FALLBACKS });
       return res.data.choices[0].message.content.trim();
     } catch (err) {
       console.error('[Mistral] Erreur generateAdDescription:', err.message);
@@ -292,18 +344,12 @@ Ville: ${city}, Quartier: ${district}, Prix: ${price} FCFA`;
     ];
 
     try {
-      const res = await httpClient.post(config.mistral.apiUrl, {
+      const res = await this._callMistralResilient({
         model: config.mistral.visionModel,
         messages: [{ role: 'user', content: userContent }],
         temperature: 0.3,
         max_tokens: 800,
-      }, {
-        headers: {
-          'Authorization': `Bearer ${config.mistral.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 45000,
-      });
+      }, { timeout: 45000, fallbackModels: VISION_MODEL_FALLBACKS });
       return res.data.choices[0].message.content.trim();
     } catch (err) {
       console.error('[Mistral] Erreur analyzeImage:', err.message);
@@ -343,18 +389,12 @@ Ne renvoie aucun texte hors du JSON.`;
     ];
 
     try {
-      const res = await httpClient.post(config.mistral.apiUrl, {
+      const res = await this._callMistralResilient({
         model: config.mistral.visionModel,
         messages: [{ role: 'user', content: userContent }],
         temperature: 0.1,
         max_tokens: 600,
-      }, {
-        headers: {
-          'Authorization': `Bearer ${config.mistral.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 45000,
-      });
+      }, { timeout: 45000, fallbackModels: VISION_MODEL_FALLBACKS });
       const raw = res.data.choices[0].message.content.trim();
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (!jsonMatch) throw new Error('Réponse vision sans JSON exploitable');
@@ -410,7 +450,7 @@ Résultats de recherche (${results.length} au total) :
 ${resultsSummary}`;
 
     try {
-      const res = await httpClient.post(config.mistral.apiUrl, {
+      const res = await this._callMistralResilient({
         model: config.mistral.model,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -418,13 +458,7 @@ ${resultsSummary}`;
         ],
         temperature: 0.5,
         max_tokens: 1000,
-      }, {
-        headers: {
-          'Authorization': `Bearer ${config.mistral.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 20000,
-      });
+      }, { timeout: 20000, fallbackModels: TEXT_MODEL_FALLBACKS });
       return res.data.choices[0].message.content.trim();
     } catch (err) {
       console.error('[Mistral] Erreur buildImageSearchResponse:', err.message);
@@ -471,7 +505,7 @@ Résultats (${results.length} au total):
 ${resultsSummary}`;
 
     try {
-      const res = await httpClient.post(config.mistral.apiUrl, {
+      const res = await this._callMistralResilient({
         model: config.mistral.model,
         messages: [
           { role: 'system', content: systemPrompt },
@@ -479,13 +513,7 @@ ${resultsSummary}`;
         ],
         temperature: 0.5,
         max_tokens: 800,
-      }, {
-        headers: {
-          'Authorization': `Bearer ${config.mistral.apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      });
+      }, { timeout: 15000, fallbackModels: TEXT_MODEL_FALLBACKS });
       return res.data.choices[0].message.content.trim();
     } catch (err) {
       console.error('[Mistral] Erreur buildSearchResponse:', err.message);
